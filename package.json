@@ -1,0 +1,14 @@
+{
+  "name": "indian-astrology",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Vedic (Jyotisha) chart engine — 規則逐條對帳 BPHS 原典,見 docs/SOURCES.md",
+  "scripts": {
+    "test": "node tools/test-rules.mjs",
+    "extract": "node tools/extract-chart.mjs",
+    "postinstall": "playwright install chromium"
+  },
+  "devDependencies": {
+    "playwright": "^1.62.1"
+  }
+}

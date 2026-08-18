@@ -1,0 +1,4 @@
+# tools/crosscheck.py — 對 Swiss Ephemeris 交叉驗證行星黃經與宮始點
+# 註:未呼叫 swe.set_ephe_path(),無 .se1 星曆檔時 pyswisseph 自動回退 Moshier,
+#     月亮在遠離 J2000 的年份誤差可達數十角秒(2099 實測 63.55″,已評估為可接受)。
+pyswisseph>=2.10.3
