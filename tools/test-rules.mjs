@@ -706,6 +706,16 @@ for (let y = 1957; y <= 2013; y += 14) {
       const d = R.ishtaKashta(disp);
       if (Math.abs(ik.net - d.net) > 1e-9) bad.push(`${n} 之果與主星不同`);
     }
+    // ⑦ 本命論斷:分數必須與大運層走同一個 28 章的量(不得另立一套),
+    //    且敘述不得沾到大運層的時間語境 —— buildNatal 與 buildInterp 分家的理由就在此
+    for (const p of ['Sun','Moon','Mars','Mercury','Jupiter','Venus','Saturn','Rahu','Ketu']) {
+      const nt = R.buildNatal(p);
+      if (Math.abs(nt.score - R.ishtaKashta(p).net) > 1e-9)
+        bad.push(`${p} 本命論斷的分數 ${nt.score} ≠ 28 章淨吉分`);
+      for (const w of ['大運','流年','流月','流日','流時','期間'])
+        if (nt.html.indexOf(w) >= 0) bad.push(`${p} 本命論斷混入大運層語彙「${w}」`);
+      if (nt.html.indexOf('BPHS 28.6–12') < 0) bad.push(`${p} 本命論斷未標分數出處`);
+    }
     return bad;
   }));
 }

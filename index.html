@@ -92,6 +92,11 @@ tr:last-child td{border-bottom:none}
     </div>
 
     <div class="panel">
+      <h2>本命論斷</h2>
+      <div class="stack" id="natal"></div>
+    </div>
+
+    <div class="panel">
       <h2>行星位置</h2>
       <table id="ptable"></table>
       <div class="note" id="panchanga"></div>
@@ -1684,6 +1689,126 @@ function buildInterp(p, depth, upper){
   return { html: parts.join(''), score };
 }
 
+// ---- 本命論斷 ----
+// 與 buildInterp 的差別只在**語境**:那支講的是某顆星「在某段大運期間」帶來什麼,
+// 語氣綁在時間段上(LEVEL_INTRO／LEVEL_ZH);本命論斷講的是這顆星在盤上的既定位置,
+// 是先天格局,沒有起訖。素材(落宮、宮主職能、五重友誼、相映、燃燒逆行、吉凶果)
+// 兩者共用同一批規則函式,分數同樣只由 BPHS 28.6–12 給,敘述一律不計分。
+function buildNatal(p){
+  const ch = state.chart, ascRasi = state.ascRasi;
+  const pl = ch.planets[p];
+  const rasi = V.rasiOf(pl.lon);
+  const house = ((rasi-ascRasi)+12)%12+1;
+  const nak = V.nakOf(pl.lon);
+  const ik = ishtaKashta(p, ch);
+  const dign = dignityOf(p, pl.lon);
+  const isNode = (p==='Rahu'||p==='Ketu');
+  const parts = [];
+  parts.push(`<b>${PLANET_ZH[p]}</b>主${KARAKA[p]}。`);
+  let s2 = `落第 ${house} 宮（${SIGNS[rasi]}${dign?'，'+dign.label:''}），`
+         + `此生於${HOUSE_TH[house-1]}一域著墨最深`;
+  if (isNode){
+    const disp = SIGN_LORD[rasi];
+    const dh = ((V.rasiOf(ch.planets[disp].lon)-ascRasi)+12)%12+1;
+    s2 += `；其效應循星座主星${PLANET_ZH[disp]}（落第 ${dh} 宮）而發`;
+  } else {
+    const ruled = housesRuled(p, ascRasi);
+    if (ruled.length){
+      const fn = funcNature(ruled, ascRasi);
+      s2 += `，並掌第 ${ruled.join('、')} 宮`;
+      if (fn.notes.length) s2 += `——${fn.notes.join('；')}`;
+    }
+  }
+  s2 += `。其宿為 ${NAKS[nak]}（${NAK_KEY[nak]}）。`;
+  parts.push(s2);
+  const extra = [];
+  if (pl.retro && !isNode) extra.push('本命逆行，此星所主之事常需回頭重整，成於溫故');
+  if (combustion(p)){
+    extra.push(p==='Moon' ? '貼近朔（燃燒），心緒少所依託、內在安定感偏弱'
+                          : '貼近太陽（燃燒），其主題易被強勢外務蓋過');
+  }
+  const asp = aspectsOn(p);
+  if (asp.ben.length) extra.push(`得${asp.ben.join('、')}，此域有貴人助力`);
+  if (asp.mal.length) extra.push(`受${asp.mal.join('、')}，張力較大、步調宜穩`);
+  if (extra.length) parts.push(extra.join('；')+'。');
+  const chan = ISHTA_CHANNELS.map(([k, zh]) => `${zh} ${ik.vals[k].toFixed(1)}`).join('、')
+             + ISHTA_REF.map(([k, zh]) => `（${zh} ${ik.vals[k].toFixed(1)}，參考未計）`).join('');
+  parts.push(`<span class="muted">吉凶果（BPHS 28.6–12）：${chan}`
+    + `${ik.via ? `　※交點無自身之力，取星座主星${PLANET_ZH[ik.via]}之果` : ''}`
+    + `　→ शुभ ${ik.subha.toFixed(1)} ／ अशुभ ${ik.asubha.toFixed(1)} virūpa</span>`);
+  return { html: parts.join(''), score: ik.net };
+}
+
+function renderNatal(){
+  const el = $('natal'); el.innerHTML='';
+  const ch = state.chart, ascRasi = state.ascRasi;
+  const ORDER = ['Sun','Moon','Mars','Mercury','Jupiter','Venus','Saturn','Rahu','Ketu'];
+
+  // ① 命宮與命主 —— 上升所在星座之主為命主,其落點是全盤的起手處
+  const lagnesha = SIGN_LORD[ascRasi];
+  const lh = ((V.rasiOf(ch.planets[lagnesha].lon)-ascRasi)+12)%12+1;
+  const ld = dignityOf(lagnesha, ch.planets[lagnesha].lon);
+  const lik = ishtaKashta(lagnesha, ch);
+  const [ltag, lcls] = toneTag(lik.net);
+  const head = document.createElement('div');
+  head.className = 'srow';
+  head.style.borderColor = 'var(--gold-dim)';
+  head.innerHTML = `<span class="lv">命宮</span>`
+    + `<span style="flex:1 1 100%;max-width:100%">上升 <b style="color:var(--gold)">${SIGNS[ascRasi]}</b>`
+    + `　命主 <b style="color:var(--gold)">${PLANET_ZH[lagnesha]}</b>`
+    + `<span class="tg ${lcls}">${ltag}</span>`
+    + `<br><span class="muted">命主落第 ${lh} 宮（${SIGNS[V.rasiOf(ch.planets[lagnesha].lon)]}`
+    + `${ld?'，'+ld.label:''}），`
+    + `一生的著力處由此起——${HOUSE_TH[lh-1]}。`
+    + `其淨吉分 ${lik.net>=0?'+':''}${lik.net.toFixed(1)} virūpa。</span></span>`;
+  el.appendChild(head);
+
+  // ② 九曜逐一
+  const scored = [];
+  for (const p of ORDER){
+    const it = buildNatal(p);
+    const [tag, tcls] = toneTag(it.score);
+    scored.push({p, score: it.score, tag});
+    const row = document.createElement('div');
+    row.className = 'srow hasinterp';
+    const pl = ch.planets[p];
+    const house = ((V.rasiOf(pl.lon)-ascRasi)+12)%12+1;
+    row.innerHTML = `<span class="lv">${house} 宮</span>`
+      + `<span class="lord">${PLANET_ZH[p]} <span class="muted">${p}</span><span class="tg ${tcls}">${tag}</span></span>`
+      + `<span class="rng">${SIGNS[V.rasiOf(pl.lon)]} ${degFmt(pl.lon)}</span>`
+      + `<span class="dur" style="margin-left:auto;color:var(--gold-dim);font-size:12.5px">`
+      + `${it.score>=0?'+':''}${it.score.toFixed(1)} virūpa</span>`;
+    el.appendChild(row);
+    const ip = document.createElement('div');
+    ip.className = 'interp';
+    ip.innerHTML = it.html;
+    el.appendChild(ip);
+  }
+
+  // ③ 先天強弱總覽
+  // 交點取星座主星之果、必與主星同分,列進強弱榜只是重複(28 章本亦只論七曜)
+  const asc = scored.filter(x => x.p!=='Rahu' && x.p!=='Ketu').sort((a,b)=>b.score-a.score);
+  const top = asc.slice(0,3), bot = asc.slice(-3).reverse();
+  const f = x => `${PLANET_ZH[x.p]} ${x.score>=0?'+':''}${x.score.toFixed(1)}（${x.tag}）`;
+  const sum = document.createElement('div');
+  sum.className = 'srow';
+  sum.style.borderColor = 'var(--gold-dim)';
+  sum.innerHTML = `<span class="lv">總覽</span>`
+    + `<span style="flex:1 1 100%;max-width:100%">先天最強：<b style="color:var(--gold)">${top.map(f).join('　')}</b>`
+    + `<br>相對弱勢：<b style="color:var(--gold)">${bot.map(f).join('　')}</b>`
+    + `<span class="muted" style="font-size:12.5px"><br>　此處是<b>本命的先天強弱</b>，不是運勢起落——`
+    + `哪一段時間由哪顆星當令，看下方「此刻運勢（五層層疊）」。`
+    + `<br>　吉凶分數依《Bṛhat Parāśara Horā Śāstra》第 28 章 इष्टकष्ट（28.6–12），與五層層疊同一套算法、同一個 virūpa 尺度；`
+    + `0 為 28.12 給定的吉凶分界。落宮、宮主職能、相映、燃燒逆行等項僅作敘述、不參與計分。`
+    + `<br>　<b>因此「居至敵宮卻大吉」「入根本三角卻挑戰」是可能的，不是計算錯誤</b>：分數由 28.6 的`
+    + ` उच्चरश्मि／चेष्टारश्मि 與 28.11 的 दिक्फल／दिनफल 三項構成，廟旺陷只透過 उच्चबल（離旺點的角距）`
+    + `間接反映，燃燒（अस्त）則完全不進分數——原典把燃燒放在 28.7 的位置吉分，而該項因尺度不相容`
+    + `已退出合成（見 docs/SOURCES.md）。要看廟旺陷與燃燒本身，請看上方「行星位置」與六力表。`
+    + `<br>　原典另有 28.15–17 的 भावफल（宮位果報，結尾即「एवं शुभाऽशुभं ज्ञात्वा जातकस्य फलं वदेत्」）`
+    + `尚未實作，故本區塊按行星立論，未按十二宮立論。僅供參考。</span></span>`;
+  el.appendChild(sum);
+}
+
 // ---- current dasha stack ----
 let queryTime = null;
 function renderStack(){
@@ -1780,6 +1905,7 @@ function run(){
   $('ptable').innerHTML = rows;
   $('panchanga').textContent = panchangaText(chart, birthUT, offH);
   renderShadbala(chart);
+  renderNatal();
 
   // query default = now
   $('qtzlabel').textContent = (offH>=0?'+':'')+offH;
@@ -1799,7 +1925,7 @@ $('qgo').addEventListener('click', ()=>{
 
 // 測試出口:tools/ 的驗證腳本要能直接呼叫規則函式,不經過 UI 文字比對。
 // 只讀不寫,UI 本身不使用。
-window.__rules = { dignityOf, buildInterp, toneTag, relToUpper, FRIEND, ENEMY,
+window.__rules = { dignityOf, buildInterp, buildNatal, toneTag, relToUpper, FRIEND, ENEMY,
                    ucchaRasmi, chestaRasmi, chesta28Kendra, ishtaPhala, SUBHANKA,
                    saptavargaSubhanka, ishtaKashta, ISHTA_CHANNELS, ISHTA_REF, TONE_MID, TONE_HIGH,
                    SIGN_LORD, naturalRel, tatkalikaOf, panchadhaMaitri,
