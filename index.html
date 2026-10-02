@@ -56,6 +56,11 @@ tr:last-child td{border-bottom:none}
 .tg-mix{background:#4d431d;color:#e8d48e}
 .tg-hard{background:#4d241d;color:#f0a08e}
 .err{color:#f0917f;padding:8px 0}
+.warnbanner{background:#332a12;border:1px solid var(--gold-dim);color:#e8d48e;border-radius:12px;
+  padding:12px 16px;margin-bottom:18px;font-size:13.5px;line-height:1.7}
+.warnbanner b{color:var(--gold)}
+.timenote{color:#c9b877;font-size:12.5px;line-height:1.6;background:#2a2410;border:1px solid #4a3f1c;
+  border-radius:6px;padding:6px 10px;margin-bottom:10px}
 #results{display:none}
 @media (max-width:640px){ .srow .lv{min-width:100%} }
 </style>
@@ -70,6 +75,10 @@ tr:last-child td{border-bottom:none}
     <div class="grid">
       <div class="field"><label>出生日期</label><input type="date" id="bdate" value="1990-05-15"></div>
       <div class="field"><label>出生時間（當地）</label><input type="time" id="btime" value="14:30" step="60"></div>
+      <div class="field"><label style="visibility:hidden">・</label>
+        <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--muted);white-space:nowrap">
+          <input type="checkbox" id="btimeUncertain" style="width:auto">不確定出生時間</label>
+      </div>
       <div class="field"><label>時區 UTC±</label><input type="number" id="btz" value="8" step="0.25" style="width:5.5em"></div>
       <div class="field"><label>出生城市</label>
         <select id="city"></select>
@@ -611,6 +620,49 @@ const CITIES = [
  ['自訂 Custom',null,null,null]
 ];
 const $ = id => document.getElementById(id);
+
+// ---- 出生時間不確定：僅加註警示文字,不改任何排盤規則或數值 ----
+// 換算依據（皆由本檔既有常數／原理推得，非另引新規則）：
+//   上升：地球約 23h56m 自轉 360°，故上升每約 2 小時移動 1 星座（30°）——教學慣用近似。
+//   D9：一足 pāda = 3°20′（30°／9），對應上升 3.3333°／(30°/120min) ≈ 13.3 分鐘，取整為約 13 分鐘。
+//   大運：月亮恆星週期 27.321661 日／360° ≈ 每小時 0.549°，取一位小數約 0.5°／小時。
+const TIME_UNCERTAIN_BANNER =
+  '⚠️ 出生時間不確定：上升（Lagna）每約 2 小時換一個星座，牽動全部以整宮制（Whole Sign）計算的宮位；'
+  + '九分盤（D9）每約 13 分鐘換一格；大運（Vimśottarī Daśā）起點依月亮所在宿的度數推算，月亮每小時約移 0.5°。'
+  + '以下涉及上升、宮位、D9、六力方位與時間分項、大運起點的內容僅供參考。';
+const TIME_NOTE_OVERVIEW = '出生時間不確定：本命盤（D1）宮位依上升推算（每約 2 小時換一個星座），九分盤（D9）每約 13 分鐘換一格，以上僅供參考。';
+const TIME_NOTE_NATAL = '出生時間不確定：以下宮位數字（含命宮）皆依上升起算，上升每約 2 小時換一個星座，僅供參考。';
+const TIME_NOTE_SHADBALA = '出生時間不確定：方位力（दिक्）依上升推算、時間力（काल）依出生時刻的晝夜與時辰推算，僅供參考。';
+const TIME_NOTE_STACK = '出生時間不確定：大運起點依月亮所在宿的度數推算（月亮每小時約移 0.5°），起點與各層區間僅供參考。';
+// 動態插入／移除，而非固定寫入樣板 HTML —— 確保勾選框未勾時，#results 的
+// innerHTML 與加這個功能之前逐字元相同（tools/test-rules.mjs 的 pageerror 檢查即比對此）。
+function syncTimeNote(id, text, anchorEl){
+  let el = document.getElementById(id);
+  if (state && state.timeUncertain){
+    if (!el){
+      el = document.createElement('div');
+      el.id = id; el.className = 'timenote';
+      anchorEl.parentNode.insertBefore(el, anchorEl);
+    }
+    el.textContent = text;
+  } else if (el){
+    el.remove();
+  }
+}
+function syncTimeBanner(){
+  const results = $('results');
+  let el = document.getElementById('timeWarnBanner');
+  if (state && state.timeUncertain){
+    if (!el){
+      el = document.createElement('div');
+      el.id = 'timeWarnBanner'; el.className = 'warnbanner';
+      results.insertBefore(el, results.firstChild);
+    }
+    el.textContent = TIME_UNCERTAIN_BANNER;
+  } else if (el){
+    el.remove();
+  }
+}
 
 // city select
 const citySel = $('city');
@@ -1353,6 +1405,7 @@ function shadbala(p, chart){
   return b;
 }
 function renderShadbala(chart){
+  syncTimeNote('sbTimeNote', TIME_NOTE_SHADBALA, $('sbtable'));
   const cols = [['sthana','स्थान<br>位置'], ['dig','दिक्<br>方位'], ['kala','काल<br>時間'],
                 ['chesta','चेष्टा<br>動勢'], ['naisargika','नैसर्गिक<br>自然'], ['drik','दृक्<br>相映']];
   let rows = '<tr><th>行星</th>' + cols.map(c => `<th>${c[1]}</th>`).join('')
@@ -1746,7 +1799,31 @@ function buildNatal(p){
   return { html: parts.join(''), score: ik.net };
 }
 
+// ---- 總覽綜合判斷 ----
+// 只重組 renderNatal 已經算好、已經顯示的量:九曜 इष्ट／कष्ट 淨吉分排序(①②步算出的
+// top／bot)與命主本身的落宮、強弱(①步命宮區塊已算出的 lagnesha／lh／ld／lik)。
+// 不另立規則、不另設門檻,也不引用本檔尚未出現過的 BPHS 條文——純粹是把已經攤開
+// 給使用者看的兩組事實(命主的個別位置、九曜整體的強弱榜)講成一句跨行星的結論。
+function buildOverviewSynthesis(top, bot, lagnesha, lh, ld, lik){
+  const name = PLANET_ZH[lagnesha];
+  const [ltag] = toneTag(lik.net);
+  const inTop = top.some(x => x.p === lagnesha);
+  const inBot = bot.some(x => x.p === lagnesha);
+  const posClause = inTop
+    ? '命主本身即位列先天最強之一'
+    : inBot
+    ? '命主本身即位列相對弱勢之一'
+    : '命主之力居九曜強弱的中段，不在最強或最弱之列';
+  const strongest = top[0], weakest = bot[0];
+  return `命主${name}${ld ? '（'+ld.label+'）' : ''}落第 ${lh} 宮，`
+    + `淨吉分 ${lik.net>=0?'+':''}${lik.net.toFixed(1)} virūpa（${ltag}）。`
+    + `${posClause}。`
+    + `先天九曜以${PLANET_ZH[strongest.p]}（${strongest.tag}）淨吉分最高、${PLANET_ZH[weakest.p]}（${weakest.tag}）淨吉分最低，`
+    + `此為本命先天格局的靜態對照，際遇仍需配合下方「此刻運勢（五層層疊）」判讀。`;
+}
+
 function renderNatal(){
+  syncTimeNote('natalTimeNote', TIME_NOTE_NATAL, $('natal'));
   const el = $('natal'); el.innerHTML='';
   const ch = state.chart, ascRasi = state.ascRasi;
   const ORDER = ['Sun','Moon','Mars','Mercury','Jupiter','Venus','Saturn','Rahu','Ketu'];
@@ -1803,12 +1880,13 @@ function renderNatal(){
   sum.innerHTML = `<span class="lv">總覽</span>`
     + `<span style="flex:1 1 100%;max-width:100%">先天最強：<b style="color:var(--gold)">${top.map(f).join('　')}</b>`
     + `<br>相對弱勢：<b style="color:var(--gold)">${bot.map(f).join('　')}</b>`
+    + `<br><span id="natalSynthesis" class="muted">${buildOverviewSynthesis(top, bot, lagnesha, lh, ld, lik)}</span>`
     + `<span class="muted" style="font-size:12.5px"><br>　此處是<b>本命的先天強弱</b>，不是運勢起落——`
     + `哪一段時間由哪顆星當令，看下方「此刻運勢（五層層疊）」。`
-    + `<br>　吉凶分數依《Bṛhat Parāśara Horā Śāstra》第 28 章 इष्टकष्ट（28.6–12），與五層層疊同一套算法、同一個 virūpa 尺度；`
+    + `<br>　吉凶分數依《Bṛhat Parāśara Horā Śāstra》第 28 章 इष्टकष्ट（吉凶果，28.6–12），與五層層疊同一套算法、同一個 virūpa 尺度；`
     + `0 為 28.12 給定的吉凶分界。落宮、宮主職能、相映、燃燒逆行等項僅作敘述、不參與計分。`
-    + `<br>　<b>因此「居至敵宮卻大吉」「入根本三角卻挑戰」是可能的，不是計算錯誤</b>：分數由 28.6 的`
-    + ` उच्चरश्मि／चेष्टारश्मि 與 28.11 的 दिक्फल／दिनफल 三項構成，廟旺陷只透過 उच्चबल（離旺點的角距）`
+    + `<br>　<b>因此「居至敵宮卻大吉」「入根本三角卻挑戰」都是可能出現的結果</b>：分數由 28.6 的`
+    + ` उच्चरश्मि（旺相之光）／चेष्टारश्मि（動勢之光）與 28.11 的 दिक्फल（方位）／दिनफल（晝夜）三項構成，廟旺陷只透過 उच्चबल（離旺點的角距）`
     + `間接反映，燃燒（अस्त）則完全不進分數——原典把燃燒放在 28.7 的位置吉分，而該項因尺度不相容`
     + `已退出合成（見 docs/SOURCES.md）。要看廟旺陷與燃燒本身，請看上方「行星位置」與六力表。`
     + `<br>　原典另有 28.15–17 的 भावफल（宮位果報，結尾即「एवं शुभाऽशुभं ज्ञात्वा जातकस्य फलं वदेत्」）`
@@ -1819,6 +1897,7 @@ function renderNatal(){
 // ---- current dasha stack ----
 let queryTime = null;
 function renderStack(){
+  syncTimeNote('stackTimeNote', TIME_NOTE_STACK, $('stack').parentElement.querySelector('.grid'));
   const el = $('stack'); el.innerHTML='';
   const t = queryTime;
   if (t < state.mds[0].start || t >= state.mds[8].end){
@@ -1860,7 +1939,7 @@ function renderStack(){
     `<span style="flex:1 1 100%;max-width:100%">運程鏈：<b style="color:var(--gold)">${chain.join(' → ')}</b>`+
     `<br>整體基調（大運權重最高、流時最低）：<span class="tg ${ocls}">${otag}</span>`+
     `<span class="muted">　淨吉分 ${overall>=0?'+':''}${overall.toFixed(1)} virūpa（吉分與不吉分之差；0 為 BPHS 28.12 的吉凶分界）</span>`+
-    `<span class="muted" style="font-size:12.5px"><br>　吉凶分數依《Bṛhat Parāśara Horā Śāstra》第 28 章 इष्टकष्ट：उच्चरश्मि／चेष्टारश्मि 之 इष्टफल（28.6）、दिक्फल 與 दिनफल（28.11），以 28.12「吉分大於不吉分則其大運為吉」合判。七分盤九級 शुभाङ्क（28.7–9）仍算仍顯示，但因尺度與 28.9・11 的互補結構不相容已退出合成，故燃燒（अस्त）不影響分數。落宮、宮主職能（含 māraka／badhaka）、分級相映、燃燒逆行、層間主星相對位置等項僅作敘述、不參與計分——那批權重無原典依據。「層間主星相對位置」本身亦非 Parāśara 原文（同一句裡的兩星友敵則依 BPHS 3.55–58）。僅供參考。</span></span>`;
+    `<span class="muted" style="font-size:12.5px"><br>　吉凶分數依《Bṛhat Parāśara Horā Śāstra》第 28 章 इष्टकष्ट（吉凶果）：उच्चरश्मि（旺相之光）／चेष्टारश्मि（動勢之光）之 इष्टफल（28.6）、दिक्फल（方位）與 दिनफल（晝夜，28.11），以 28.12「吉分大於不吉分則其大運為吉」合判。七分盤九級 शुभाङ्क（28.7–9）仍算仍顯示，但因尺度與 28.9・11 的互補結構不相容已退出合成，故燃燒（अस्त）不影響分數。落宮、宮主職能（含 māraka／badhaka）、分級相映、燃燒逆行、層間主星相對位置等項僅作敘述、不參與計分——那批權重無原典依據。「層間主星相對位置」本身亦非 Parāśara 原文（同一句裡的兩星友敵則依 BPHS 3.55–58）。僅供參考。</span></span>`;
   el.appendChild(sum);
 }
 
@@ -1877,7 +1956,11 @@ function run(){
   const birthUT = toUT(dateStr, timeStr, offH);
   const chart = V.computeChart(birthUT, lat, lon);
   const moonLon = chart.planets.Moon.lon;
-  state = { birthUT, offH, lat, lon, chart, moonLon, mds: V.mahadashas(moonLon, birthUT) };
+  const timeUncertain = $('btimeUncertain').checked;
+  state = { birthUT, offH, lat, lon, chart, moonLon, mds: V.mahadashas(moonLon, birthUT), timeUncertain };
+
+  syncTimeBanner();
+  syncTimeNote('overviewTimeNote', TIME_NOTE_OVERVIEW, document.querySelector('#results .charts'));
 
   // chips
   const ascRasi = V.rasiOf(chart.asc);
@@ -1932,7 +2015,7 @@ $('qgo').addEventListener('click', ()=>{
 
 // 測試出口:tools/ 的驗證腳本要能直接呼叫規則函式,不經過 UI 文字比對。
 // 只讀不寫,UI 本身不使用。
-window.__rules = { dignityOf, buildInterp, buildNatal, toneTag, relToUpper, FRIEND, ENEMY,
+window.__rules = { dignityOf, buildInterp, buildNatal, buildOverviewSynthesis, toneTag, relToUpper, FRIEND, ENEMY, PLANET_ZH,
                    ucchaRasmi, chestaRasmi, chesta28Kendra, ishtaPhala, SUBHANKA,
                    saptavargaSubhanka, ishtaKashta, ISHTA_CHANNELS, ISHTA_REF, TONE_MID, TONE_HIGH,
                    SIGN_LORD, naturalRel, tatkalikaOf, panchadhaMaitri,

@@ -769,6 +769,70 @@ const sbUi = await page.evaluate(() => {
 if (!sbUi.length) { pass++; console.log('✅ 頁面六力表六欄齊備,總力／rūpa／इष्ट／कष्ट 與引擎一致,且已聲明分歧與 28.12 依據'); }
 else { fail++; console.log(`❌ 六力表有誤:\n   ${sbUi.join('\n   ')}`); }
 
+// ── 總覽綜合判斷:新段落只能重組已算好的量,不能另起一套 ──────────────────
+// 不呼叫 buildOverviewSynthesis 本身(那樣會套套邏輯),改用與 renderNatal 同一批
+// 已驗證過的規則函式(ishtaKashta／SIGN_LORD／PLANET_ZH)獨立重算一次命主與
+// 九曜強弱排序,再比對 #natalSynthesis 段落具名的命主／淨吉分最高／淨吉分最低是否
+// 與重算結果一致、posClause 的三分支文字是否與重算的 inTop／inBot 成員資格一致。
+// 另外兩筆(1946-03-22、1953-03-22)是 jyotish-reviewer 指出的反例:命主(水星)落陷
+// 卻仍排進強弱榜前段 —— 本段落現在只講「淨吉分最高/最低」(इष्ट／कष्ट 排序),
+// 不再講「最旺/偏弱」(那是 dignity／廟旺陷的用詞),兩套量不得混用同一個詞。
+// 禁詞表是 0925 jyotish-reviewer 審查要求:評語式半句(相合／宜留意)與錯字(實際際遇)
+// 一律不得出現在這顆星球的輸出裡。
+const FORBIDDEN = ['相合', '宜留意', '最旺', '偏弱', '實際際遇'];
+let synBad = [], synChecked = 0;
+for (const [bdate, btime] of [
+  ['1990-05-15', '08:30'], ['1978-11-04', '07:15'], ['1990-03-02', '12:00'],
+  ['1990-09-25', '12:00'], ['1958-06-22', '21:05'],
+  ['1946-03-22', '11:00'], ['1953-03-22', '19:00'],
+]) {
+  await page.fill('#bdate', bdate);
+  await page.fill('#btime', btime);
+  await page.fill('#btz', '8');
+  await page.click('#go');
+  await page.waitForTimeout(400);
+
+  const r = await page.evaluate(() => {
+    const R = window.__rules;
+    const ascRasi = R.state.ascRasi;
+    const lagnesha = R.SIGN_LORD[ascRasi];
+    const ORDER = ['Sun', 'Moon', 'Mars', 'Mercury', 'Jupiter', 'Venus', 'Saturn'];
+    const scored = ORDER.map(p => ({ p, score: R.ishtaKashta(p).net }));
+    const asc = scored.slice().sort((a, b) => b.score - a.score);
+    const top3 = asc.slice(0, 3).map(x => x.p), bot3 = asc.slice(-3).map(x => x.p);
+    const strongest = asc[0].p, weakest = asc[asc.length - 1].p;
+    const lik = R.ishtaKashta(lagnesha);
+    const d = R.dignityOf(lagnesha, R.state.chart.planets[lagnesha].lon);
+    const synText = document.getElementById('natalSynthesis').textContent;
+    return {
+      lagneshaZh: R.PLANET_ZH[lagnesha], strongestZh: R.PLANET_ZH[strongest],
+      weakestZh: R.PLANET_ZH[weakest], net: lik.net, synText,
+      inTop: top3.includes(lagnesha), inBot: bot3.includes(lagnesha),
+      dignityLabel: d ? d.label : null,
+    };
+  });
+  synChecked++;
+  const { lagneshaZh, strongestZh, weakestZh, net, synText, inTop, inBot, dignityLabel } = r;
+  const netTxt = `${net >= 0 ? '+' : ''}${net.toFixed(1)} virūpa`;
+  if (!synText.includes(`命主${lagneshaZh}`)) synBad.push(`${bdate}: 段落未提及重算命主 ${lagneshaZh}`);
+  if (!synText.includes(netTxt)) synBad.push(`${bdate}: 段落淨吉分與重算 ${netTxt} 不符`);
+  if (!new RegExp(`先天九曜以${strongestZh}（[^）]*）淨吉分最高`).test(synText))
+    synBad.push(`${bdate}: 「淨吉分最高」未緊接重算榜首 ${strongestZh}`);
+  if (!new RegExp(`${weakestZh}（[^）]*）淨吉分最低`).test(synText))
+    synBad.push(`${bdate}: 「淨吉分最低」未緊接重算墊底 ${weakestZh}`);
+  // posClause 三分支:文字必須與獨立重算的 inTop/inBot 成員資格一致,不得受 dignity 影響
+  const wantClause = inTop ? '命主本身即位列先天最強之一'
+    : inBot ? '命主本身即位列相對弱勢之一'
+    : '命主之力居九曜強弱的中段，不在最強或最弱之列';
+  if (!synText.includes(wantClause))
+    synBad.push(`${bdate}: posClause 與重算的 inTop=${inTop}/inBot=${inBot} 不符(命主 dignity=${dignityLabel})`);
+  for (const w of FORBIDDEN)
+    if (synText.includes(w)) synBad.push(`${bdate}: 段落殘留禁詞「${w}」`);
+}
+console.log(`\n總覽綜合判斷:比對 ${synChecked} 筆`);
+if (synChecked >= 6 && !synBad.length) { pass++; console.log('✅ 綜合段落具名的命主／淨吉分最高／最低與獨立重算的 इष्ट／कष्ट 排序一致,posClause 不受 dignity 干擾,禁詞未殘留'); }
+else { fail++; console.log(`❌ 綜合段落與重算結果不符:\n   ${synBad.slice(0, 10).join('\n   ') || '樣本不足'}`); }
+
 console.log(`\npageerror:${errs.length ? errs.join(';') : '(無)'}`);
 console.log(`結果:${pass} 通過 / ${fail} 失敗`);
 await browser.close();
